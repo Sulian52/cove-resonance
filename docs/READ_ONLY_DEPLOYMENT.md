@@ -8,6 +8,9 @@ This variant defaults to `BRIDGE_READ_ONLY=true`.
 - `/mcp` exposes only `netease_together_now` with a read-only annotation.
 - `/events` and `/listener/events` are unavailable in read-only mode.
 - Private chat events are not retained in the bridge queue in this mode.
+- The native NIM chat transport is disabled in read-only mode. Invitations,
+  room presence, playback and lyrics continue through the HTTP worker, normally
+  polling every four seconds. Progress between observations is estimated.
 - Data is public to anyone who knows the URL. `no-store` and `noindex` headers
   discourage caching and indexing; they are not access controls.
 - If playback has not been refreshed for 20 seconds, `stale=true`, status is
@@ -25,13 +28,19 @@ Bearer credential. `/events` likewise requires a nonempty
 
 ## Validation and remaining deployment steps
 
-Local verification: 53 tests pass; TypeScript build passes; whitespace check
+Local verification: 54 tests pass; TypeScript build passes; whitespace check
 passes. Tests cover the public field allowlist, stale data, HTTP methods,
 disabled event endpoints, MCP discovery and rejection of private tools.
 
-Not yet deployed or verified against a live NetEase invitation. Railway
-authentication and access to the actual deployment source repository are
-still needed. After deployment, verify `/now`, send an invitation from the
-main account to the secondary account, then verify song changes, pause/resume,
-progress and nearby lyrics. A reachable health endpoint alone is not proof
-that the NetEase session is valid.
+Live acceptance on 2026-09-19: the secondary account authenticated and
+automatically joined the main account's invitation. `/now` returned HTTP 200,
+the actual song and nearby lyrics; successive samples showed advancing
+progress. MCP discovery returned only `netease_together_now`; POST `/now`
+returned 405 and event endpoints returned 404. The native NIM chat runtime
+could not load in the Alpine container, so read-only mode explicitly skips
+that unused transport. HTTP polling remains the playback source.
+
+This endpoint supports on-demand reading, not unsolicited ChatGPT messages.
+ChatGPT web can use the read-only `/mcp` endpoint through developer mode where
+available. Use No Authentication: provider credentials remain on Railway and
+the only public tool returns the same limited data as `/now`.

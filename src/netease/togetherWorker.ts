@@ -15,6 +15,7 @@ type EventSink = (source: string, text: string, modelContext?: string) => unknow
 type TogetherWorkerOptions = {
   cookie: string;
   enabled: boolean;
+  realtimeEnabled?: boolean;
   inviterUid?: string;
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
@@ -44,7 +45,7 @@ export class TogetherWorker {
 
   constructor(private readonly options: TogetherWorkerOptions) {
     this.client = new NeteaseClient(options.cookie);
-    this.realtime = new NeteaseRealtimeTransport(options.enabled, (message) => {
+    this.realtime = new NeteaseRealtimeTransport(options.enabled && options.realtimeEnabled !== false, (message) => {
       this.handleRealtimeChatMessage(message);
     });
     this.status = {
@@ -151,6 +152,7 @@ export class TogetherWorker {
   }
 
   private async ensureRealtime(roomId: string, chatRoomId: string): Promise<void> {
+    if (this.options.realtimeEnabled === false) return;
     const realtimeStatus = this.realtime.getStatus();
     if (
       realtimeStatus.connected
@@ -400,6 +402,7 @@ export class TogetherWorker {
 export function createTogetherWorker(
   onEvent: EventSink,
   stateSink?: PlaybackStateSink,
+  realtimeEnabled = true,
 ): TogetherWorker {
   const cookie = process.env.NETEASE_COOKIE?.trim() ?? "";
   const explicitlyDisabled = /^(0|false|off|no)$/i.test(
@@ -418,6 +421,7 @@ export function createTogetherWorker(
   return new TogetherWorker({
     cookie,
     enabled,
+    realtimeEnabled,
     inviterUid: process.env.NETEASE_INVITER_UID?.trim() || undefined,
     pollIntervalMs: parseInterval("TOGETHER_POLL_INTERVAL_MS", 4000),
     heartbeatIntervalMs: parseInterval("TOGETHER_HEARTBEAT_INTERVAL_MS", 10_000),

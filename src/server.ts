@@ -106,7 +106,7 @@ function enqueueTogetherEvent(
   return created;
 }
 
-const togetherWorker = createTogetherWorker(enqueueTogetherEvent, playbackState);
+const togetherWorker = createTogetherWorker(enqueueTogetherEvent, playbackState, !READ_ONLY);
 
 const eventInput = z.object({
   eventId: z.string().trim().min(1).max(200).optional(),
