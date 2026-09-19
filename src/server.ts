@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { chmodSync, existsSync, unlinkSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -8,11 +8,15 @@ import { listenerWakeHub } from "./listenerWake.js";
 import { PlaybackStateStore } from "./netease/playbackState.js";
 import { createTogetherWorker } from "./netease/togetherWorker.js";
 import { InMemoryEventQueue } from "./queue.js";
+import { createReadOnlyMcpServer, publicNow } from "./now.js";
 import type { BridgeEvent, BridgeStream, ReplyPolicy, ReplyRoute } from "./types.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const MCP_PATH = "/mcp";
 const INGEST_TOKEN = process.env.BRIDGE_INGEST_TOKEN ?? "";
+// Safe by default for public deployments. Full bridge access requires a secret.
+const READ_ONLY = process.env.BRIDGE_READ_ONLY !== "false";
+const MCP_TOKEN = process.env.BRIDGE_MCP_TOKEN?.trim() ?? "";
 const UNIX_SOCKET = process.env.BRIDGE_UNIX_SOCKET?.trim() ?? "";
 const queue = new InMemoryEventQueue();
 const playbackState = new PlaybackStateStore();
@@ -88,6 +92,8 @@ function enqueueTogetherEvent(
   text: string,
   additionalModelContext?: string,
 ): boolean {
+  // There is no event consumer in read-only mode; do not retain private chat.
+  if (READ_ONLY) return false;
   const id = randomUUID();
   const created = queue.enqueue(buildBridgeEvent(
     id,
@@ -127,7 +133,14 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 }
 
 function authorized(req: IncomingMessage): boolean {
-  return !INGEST_TOKEN || req.headers.authorization === `Bearer ${INGEST_TOKEN}`;
+  return bearerMatches(req, INGEST_TOKEN);
+}
+
+function bearerMatches(req: IncomingMessage, secret: string): boolean {
+  if (!secret) return false;
+  const actual = Buffer.from(req.headers.authorization ?? "");
+  const expected = Buffer.from(`Bearer ${secret}`);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
 export function createHttpServer() {
@@ -137,6 +150,24 @@ export function createHttpServer() {
       return;
     }
     const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
+
+    if (url.pathname === "/now") {
+      res.setHeader("Cache-Control", "no-store, max-age=0");
+      res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        res.setHeader("Allow", "GET, HEAD");
+        writeJson(res, 405, { error: "method_not_allowed" });
+        return;
+      }
+      writeJson(res, 200, publicNow(playbackState.getCurrentState()));
+      return;
+    }
+
+    if (READ_ONLY && (url.pathname === "/events" || url.pathname === "/listener/events")) {
+      writeJson(res, 404, { error: "not_found" });
+      return;
+    }
 
     if (req.method === "OPTIONS") {
       res.writeHead(204, {
@@ -201,9 +232,16 @@ export function createHttpServer() {
 
     const mcpMethods = new Set(["POST", "GET", "DELETE"]);
     if (url.pathname === MCP_PATH && mcpMethods.has(req.method)) {
+      if (!READ_ONLY && !bearerMatches(req, MCP_TOKEN)) {
+        writeJson(res, 401, { error: "unauthorized" });
+        return;
+      }
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
-      const server = createMcpServer(queue, playbackState, togetherWorker);
+      res.setHeader("Cache-Control", "no-store");
+      const server = READ_ONLY
+        ? createReadOnlyMcpServer(playbackState)
+        : createMcpServer(queue, playbackState, togetherWorker);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
         enableJsonResponse: true,
@@ -216,7 +254,7 @@ export function createHttpServer() {
         await server.connect(transport);
         await transport.handleRequest(req, res);
       } catch (error) {
-        console.error("MCP request failed", error);
+        console.error("MCP request failed");
         if (!res.headersSent) writeJson(res, 500, { error: "internal_server_error" });
       }
       return;
