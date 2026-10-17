@@ -48,6 +48,47 @@ export type AccountProfile = {
 const require = createRequire(import.meta.url);
 const sdk = require("NeteaseCloudMusicApi") as NcmSdk;
 
+const REALTIME_TOKEN_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+  + "AppleWebKit/537.36 (KHTML, like Gecko) "
+  + "Chrome/124.0.0.0 Safari/537.36";
+
+const REALTIME_CLIENT_COOKIE_KEYS = new Set([
+  "os",
+  "osver",
+  "appver",
+  "channel",
+  "versioncode",
+  "buildver",
+  "resolution",
+  "requestid",
+]);
+
+function realtimeTokenCookie(cookie: string, now = Date.now()): string {
+  const preserved = cookie
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => {
+      const separator = part.indexOf("=");
+      const key = (separator >= 0 ? part.slice(0, separator) : part).trim().toLowerCase();
+      return !REALTIME_CLIENT_COOKIE_KEYS.has(key);
+    });
+
+  const requestId = `${now}_${String(Math.floor(Math.random() * 1000)).padStart(4, "0")}`;
+  return [
+    ...preserved,
+    "osver=15.5",
+    "os=osx",
+    "appver=3.1.10.5100",
+    "channel=netease",
+    "versioncode=140",
+    `buildver=${Math.floor(now / 1000)}`,
+    "resolution=1920x1080",
+    `requestId=${requestId}`,
+  ].join("; ");
+}
+
 function readLyric(body: JsonRecord, field: string): string | null {
   return readString(asRecord(body[field]).lyric);
 }
@@ -284,9 +325,10 @@ export class NeteaseClient {
       response = await fetch(url, {
         method: "GET",
         headers: {
-          cookie: this.cookie,
+          cookie: realtimeTokenCookie(this.cookie),
           accept: "application/json",
-          "user-agent": "Mozilla/5.0 CoveBridge/0.1",
+          "accept-language": "zh-CN,zh;q=0.9",
+          "user-agent": REALTIME_TOKEN_USER_AGENT,
         },
       });
     } catch (error) {
