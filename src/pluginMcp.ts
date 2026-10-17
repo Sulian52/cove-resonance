@@ -66,6 +66,103 @@ export function pluginDiscoverResult() {
   };
 }
 
+
+const eventListParamsSchema = z.object({
+  cursor: z.string().nullable().optional(),
+});
+
+const eventSubscribeParamsSchema = z.object({
+  name: z.string(),
+  arguments: z.record(z.string(), z.unknown()).optional(),
+  delivery: z.object({
+    mode: z.literal("webhook"),
+    url: z.string().url(),
+    secret: z.string(),
+  }),
+  cursor: z.string().nullable().optional(),
+  ttlMs: z.number().nullable().optional(),
+});
+
+const eventUnsubscribeParamsSchema = z.object({
+  name: z.string(),
+  arguments: z.record(z.string(), z.unknown()).optional(),
+  delivery: z.object({
+    mode: z.literal("webhook"),
+    url: z.string().url(),
+  }),
+});
+
+function pluginRpcError(
+  id: unknown,
+  code: number,
+  message: string,
+  data?: Record<string, unknown>,
+) {
+  return {
+    jsonrpc: "2.0" as const,
+    id: typeof id === "string" || typeof id === "number" || id === null ? id : null,
+    error: {
+      code,
+      message,
+      ...(data ? { data } : {}),
+    },
+  };
+}
+
+function pluginRpcResult(id: unknown, result: unknown) {
+  return {
+    jsonrpc: "2.0" as const,
+    id: typeof id === "string" || typeof id === "number" || id === null ? id : null,
+    result,
+  };
+}
+
+/**
+ * MCP Events are part of the 2026-07-28 draft and are not yet present in the
+ * upstream MCP SDK request registry. Handle those methods before the generic
+ * SDK transport so ChatGPT can list and subscribe to the advertised event.
+ */
+export async function handlePluginEventRpc(
+  request: Record<string, unknown>,
+  eventBridge: McpEventBridge,
+): Promise<Record<string, unknown> | null> {
+  const method = request.method;
+  if (method === "events/list") {
+    const parsed = eventListParamsSchema.safeParse(request.params ?? {});
+    if (!parsed.success) return pluginRpcError(request.id, -32602, "Invalid params");
+    return pluginRpcResult(request.id, {
+      events: [JSON.parse(JSON.stringify(NETEASE_MESSAGE_EVENT_DEFINITION))],
+    });
+  }
+
+  if (method === "events/subscribe") {
+    const parsed = eventSubscribeParamsSchema.safeParse(request.params ?? {});
+    if (!parsed.success) return pluginRpcError(request.id, -32602, "Invalid params");
+    try {
+      return pluginRpcResult(request.id, await eventBridge.subscribe(parsed.data));
+    } catch (error) {
+      if (error instanceof CallbackEndpointError) {
+        return pluginRpcError(request.id, -32015, "Callback endpoint error", {
+          reason: error.reason,
+        });
+      }
+      return pluginRpcError(request.id, -32602, "Invalid params");
+    }
+  }
+
+  if (method === "events/unsubscribe") {
+    const parsed = eventUnsubscribeParamsSchema.safeParse(request.params ?? {});
+    if (!parsed.success) return pluginRpcError(request.id, -32602, "Invalid params");
+    try {
+      return pluginRpcResult(request.id, eventBridge.unsubscribe(parsed.data));
+    } catch {
+      return pluginRpcError(request.id, -32602, "Invalid params");
+    }
+  }
+
+  return null;
+}
+
 async function deliverReply(
   queue: InMemoryEventQueue,
   togetherWorker: TogetherWorker,
