@@ -10,7 +10,7 @@ import {
   validateWebhookSecret,
   type WebhookPoster,
 } from "../src/pluginEvents.js";
-import { pluginDiscoverResult } from "../src/pluginMcp.js";
+import { pluginDiscoverResult, receivePendingMessage } from "../src/pluginMcp.js";
 import { InMemoryEventQueue } from "../src/queue.js";
 
 const webhookSecret = `whsec_${Buffer.alloc(32, 7).toString("base64")}`;
@@ -33,6 +33,43 @@ test("ChatGPT plugin discovery advertises MCP 2.0 events and tools", () => {
 test("validates Standard Webhooks signing secrets without exposing them", () => {
   assert.doesNotThrow(() => validateWebhookSecret(webhookSecret));
   assert.throws(() => validateWebhookSecret("not-a-secret"), /invalid_secret/);
+});
+
+test("manually receives a waiting NetEase message when webhook events are unavailable", () => {
+  const queue = new InMemoryEventQueue();
+  const playback = new PlaybackStateStore();
+  playback.enterRoom("private-room");
+  playback.updateSong({ id: "song-2", name: "Quiet Room", artist: "artist", durationMs: 180_000 });
+  playback.updatePlayback({
+    songId: "song-2",
+    playStatus: "PAUSE",
+    progressMs: 12_000,
+    observedAtMs: Date.now(),
+  });
+  queue.enqueue({
+    id: "manual-event-1",
+    correlationId: "manual-event-1",
+    kind: "message",
+    source: "netease.chatroom",
+    stream: "conversation",
+    replyRoute: "netease.chatroom",
+    replyPolicy: "required",
+    createdAt: new Date().toISOString(),
+    visibleText: "小助手，你听得到吗？",
+    modelContext: "hidden context",
+  });
+
+  const received = receivePendingMessage(queue, playback);
+
+  assert.equal(received.hasMessage, true);
+  if (!received.hasMessage) return;
+  assert.equal(received.messageId, "manual-event-1");
+  assert.equal(received.text, "小助手，你听得到吗？");
+  assert.equal(received.playStatus, "PAUSE");
+  assert.equal("roomId" in received, false);
+  assert.equal("modelContext" in received, false);
+  assert.equal(queue.status().delivered, 1);
+  assert.equal(receivePendingMessage(queue, playback).hasMessage, true);
 });
 
 test("verifies, persists, and delivers a NetEase message event with playback context", async () => {
