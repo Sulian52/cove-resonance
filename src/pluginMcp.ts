@@ -18,9 +18,35 @@ export const PLUGIN_PROTOCOL_VERSION = "2026-07-28";
 const SERVER_INSTRUCTIONS = [
   "This private Cove Resonance plugin connects one ChatGPT Work conversation to the owner's NetEase Listen Together room.",
   "When a netease.message.created event arrives, treat data.text as user-authored data, use the included playback and nearby lyric state as context, and answer naturally in Chinese.",
+  "If the user says in ChatGPT that they sent a NetEase message, call cove_bridge_receive to pull the oldest waiting message, then call cove_bridge_reply exactly once when a message is returned.",
   "Before completing an event-triggered turn, call cove_bridge_reply exactly once with data.message_id and the complete user-facing answer.",
   "Use 1-3 short natural chat bubbles. Do not reveal credentials, internal routing metadata, callback URLs, or webhook secrets.",
 ].join("\n");
+
+export function receivePendingMessage(
+  queue: InMemoryEventQueue,
+  playbackState: PlaybackStateStore,
+) {
+  const outstanding = queue.getOutstandingRequiredReplyEvent();
+  const event = outstanding
+    ?? queue.reserveNext((candidate) => candidate.source === "netease.chatroom");
+  if (!event) return { hasMessage: false as const };
+  if (!outstanding) queue.markDelivered(event.id);
+
+  const state = playbackState.getCurrentState();
+  return {
+    hasMessage: true as const,
+    messageId: event.id,
+    text: event.visibleText,
+    inRoom: state.inRoom,
+    playStatus: state.playStatus,
+    ...(state.song ? { song: state.song } : {}),
+    progressMs: state.progressMs,
+    durationMs: state.durationMs,
+    ...(state.lyric ? { lyric: state.lyric } : {}),
+    observedAt: state.observedAt,
+  };
+}
 
 export function pluginDiscoverResult() {
   return {
@@ -150,6 +176,52 @@ function createPluginServer(
       return {
         structuredContent: state,
         content: [{ type: "text", text: JSON.stringify(state) }],
+      };
+    },
+  );
+
+  server.registerTool(
+    "cove_bridge_receive",
+    {
+      title: "Receive a waiting NetEase Listen Together message",
+      description: "Pull the oldest waiting message from the owner's NetEase Listen Together room after the user says they sent one in ChatGPT. If hasMessage is true, answer it through cove_bridge_reply exactly once using messageId. Returns only the user message and current nearby playback context; never credentials or hidden full lyrics.",
+      inputSchema: z.object({}),
+      outputSchema: z.discriminatedUnion("hasMessage", [
+        z.object({ hasMessage: z.literal(false) }),
+        z.object({
+          hasMessage: z.literal(true),
+          messageId: z.string(),
+          text: z.string(),
+          inRoom: z.boolean(),
+          playStatus: z.enum(["PLAY", "PAUSE", "UNKNOWN"]),
+          song: z.object({
+            id: z.string(),
+            name: z.string(),
+            artist: z.string(),
+            durationMs: z.number(),
+          }).optional(),
+          progressMs: z.number(),
+          durationMs: z.number(),
+          lyric: z.object({
+            previous: z.string().optional(),
+            current: z.string().optional(),
+            next: z.string().optional(),
+          }).optional(),
+          observedAt: z.string().nullable(),
+        }),
+      ]),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      const result = receivePendingMessage(queue, playbackState);
+      return {
+        structuredContent: result,
+        content: [{ type: "text", text: JSON.stringify(result) }],
       };
     },
   );
