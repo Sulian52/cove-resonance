@@ -273,6 +273,8 @@ export class McpEventBridge {
   private lastRpcMethod: string | null = null;
   private lastRpcAt: string | null = null;
   private lastRpcOutcome: string | null = null;
+  private lastVerificationHttpStatus: number | null = null;
+  private lastVerificationOutcome: string | null = null;
 
   constructor(
     private readonly queue: InMemoryEventQueue,
@@ -291,6 +293,8 @@ export class McpEventBridge {
     lastRpcAt: string | null;
     lastRpcOutcome: string | null;
     recentRpc: Array<{ method: string; at: string; outcome: string }>;
+    lastVerificationHttpStatus: number | null;
+    lastVerificationOutcome: string | null;
   } {
     this.purgeExpired();
     return {
@@ -300,6 +304,8 @@ export class McpEventBridge {
       lastRpcAt: this.lastRpcAt,
       lastRpcOutcome: this.lastRpcOutcome,
       recentRpc: [...this.recentRpc],
+      lastVerificationHttpStatus: this.lastVerificationHttpStatus,
+      lastVerificationOutcome: this.lastVerificationOutcome,
     };
   }
 
@@ -385,6 +391,8 @@ export class McpEventBridge {
     const messageId = `msg_verification_${randomUUID()}`;
     const body = JSON.stringify({ type: "verification", challenge });
     let result: PostResult;
+    this.lastVerificationHttpStatus = null;
+    this.lastVerificationOutcome = "started";
     try {
       result = await this.poster(
         subscription.url,
@@ -392,10 +400,15 @@ export class McpEventBridge {
         signatureHeaders(subscription, messageId, body),
       );
     } catch (error) {
+      this.lastVerificationOutcome = error instanceof CallbackEndpointError
+        ? `network_${error.reason}`
+        : "network_error";
       if (error instanceof CallbackEndpointError) throw error;
       throw new CallbackEndpointError("challenge_failed");
     }
+    this.lastVerificationHttpStatus = result.status;
     if (result.status < 200 || result.status >= 300) {
+      this.lastVerificationOutcome = "http_error";
       throw new CallbackEndpointError("challenge_failed");
     }
     let echoed = "";
@@ -403,11 +416,14 @@ export class McpEventBridge {
       const parsed = JSON.parse(result.body) as { challenge?: unknown };
       if (typeof parsed.challenge === "string") echoed = parsed.challenge;
     } catch {
+      this.lastVerificationOutcome = "invalid_json";
       throw new CallbackEndpointError("challenge_failed");
     }
     if (!constantTimeStringEqual(challenge, echoed)) {
+      this.lastVerificationOutcome = "challenge_mismatch";
       throw new CallbackEndpointError("challenge_failed");
     }
+    this.lastVerificationOutcome = "ok";
   }
 
   private async dispatchLoop(): Promise<void> {
