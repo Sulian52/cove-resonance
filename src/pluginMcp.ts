@@ -129,7 +129,11 @@ export async function handlePluginEventRpc(
   const method = request.method;
   if (method === "events/list") {
     const parsed = eventListParamsSchema.safeParse(request.params ?? {});
-    if (!parsed.success) return pluginRpcError(request.id, -32602, "Invalid params");
+    if (!parsed.success) {
+      eventBridge.noteRpc(method, "invalid_params");
+      return pluginRpcError(request.id, -32602, "Invalid params");
+    }
+    eventBridge.noteRpc(method, "ok");
     return pluginRpcResult(request.id, {
       events: [JSON.parse(JSON.stringify(NETEASE_MESSAGE_EVENT_DEFINITION))],
     });
@@ -137,25 +141,38 @@ export async function handlePluginEventRpc(
 
   if (method === "events/subscribe") {
     const parsed = eventSubscribeParamsSchema.safeParse(request.params ?? {});
-    if (!parsed.success) return pluginRpcError(request.id, -32602, "Invalid params");
+    if (!parsed.success) {
+      eventBridge.noteRpc(method, "invalid_params");
+      return pluginRpcError(request.id, -32602, "Invalid params");
+    }
     try {
-      return pluginRpcResult(request.id, await eventBridge.subscribe(parsed.data));
+      const result = await eventBridge.subscribe(parsed.data);
+      eventBridge.noteRpc(method, "ok");
+      return pluginRpcResult(request.id, result);
     } catch (error) {
       if (error instanceof CallbackEndpointError) {
+        eventBridge.noteRpc(method, `callback_${error.reason}`);
         return pluginRpcError(request.id, -32015, "Callback endpoint error", {
           reason: error.reason,
         });
       }
+      eventBridge.noteRpc(method, "invalid_params");
       return pluginRpcError(request.id, -32602, "Invalid params");
     }
   }
 
   if (method === "events/unsubscribe") {
     const parsed = eventUnsubscribeParamsSchema.safeParse(request.params ?? {});
-    if (!parsed.success) return pluginRpcError(request.id, -32602, "Invalid params");
+    if (!parsed.success) {
+      eventBridge.noteRpc(method, "invalid_params");
+      return pluginRpcError(request.id, -32602, "Invalid params");
+    }
     try {
-      return pluginRpcResult(request.id, eventBridge.unsubscribe(parsed.data));
+      const result = eventBridge.unsubscribe(parsed.data);
+      eventBridge.noteRpc(method, "ok");
+      return pluginRpcResult(request.id, result);
     } catch {
+      eventBridge.noteRpc(method, "invalid_params");
       return pluginRpcError(request.id, -32602, "Invalid params");
     }
   }
