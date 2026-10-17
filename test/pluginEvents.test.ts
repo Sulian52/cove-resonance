@@ -10,7 +10,11 @@ import {
   validateWebhookSecret,
   type WebhookPoster,
 } from "../src/pluginEvents.js";
-import { pluginDiscoverResult, receivePendingMessage } from "../src/pluginMcp.js";
+import {
+  handlePluginEventRpc,
+  pluginDiscoverResult,
+  receivePendingMessage,
+} from "../src/pluginMcp.js";
 import { InMemoryEventQueue } from "../src/queue.js";
 
 const webhookSecret = `whsec_${Buffer.alloc(32, 7).toString("base64")}`;
@@ -33,6 +37,61 @@ test("ChatGPT plugin discovery advertises MCP 2.0 events and tools", () => {
 test("validates Standard Webhooks signing secrets without exposing them", () => {
   assert.doesNotThrow(() => validateWebhookSecret(webhookSecret));
   assert.throws(() => validateWebhookSecret("not-a-secret"), /invalid_secret/);
+});
+
+test("handles draft MCP event methods before the upstream SDK registry", async () => {
+  const queue = new InMemoryEventQueue();
+  const playback = new PlaybackStateStore();
+  const poster: WebhookPoster = async (_url, body) => {
+    const parsed = JSON.parse(body) as { type?: string; challenge?: string };
+    return parsed.type === "verification"
+      ? { status: 200, body: JSON.stringify({ challenge: parsed.challenge }) }
+      : { status: 202, body: "" };
+  };
+  const storagePath = join(mkdtempSync(join(tmpdir(), "cove-events-rpc-")), "subscriptions.json");
+  const bridge = new McpEventBridge(queue, playback, storagePath, poster);
+
+  const listed = await handlePluginEventRpc({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "events/list",
+    params: {},
+  }, bridge);
+  assert.equal((listed as { result: { events: Array<{ name: string }> } }).result.events[0].name, NETEASE_MESSAGE_EVENT);
+
+  const subscribed = await handlePluginEventRpc({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "events/subscribe",
+    params: {
+      name: NETEASE_MESSAGE_EVENT,
+      arguments: {},
+      delivery: {
+        mode: "webhook",
+        url: "https://callbacks.openai.com/cove-rpc-test",
+        secret: webhookSecret,
+      },
+    },
+  }, bridge);
+  assert.match((subscribed as { result: { id: string } }).result.id, /^sub_[a-f0-9]{32}$/);
+  assert.equal(bridge.status().subscriptions, 1);
+
+  const invalidSecret = "do-not-echo-this-secret";
+  const rejected = await handlePluginEventRpc({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "events/subscribe",
+    params: {
+      name: NETEASE_MESSAGE_EVENT,
+      delivery: {
+        mode: "webhook",
+        url: "https://callbacks.openai.com/cove-rpc-test",
+        secret: invalidSecret,
+      },
+    },
+  }, bridge);
+  assert.equal((rejected as { error: { code: number } }).error.code, -32015);
+  assert.equal(JSON.stringify(rejected).includes(invalidSecret), false);
 });
 
 test("manually receives a waiting NetEase message when webhook events are unavailable", () => {
