@@ -8,7 +8,12 @@ import { listenerWakeHub } from "./listenerWake.js";
 import { PlaybackStateStore } from "./netease/playbackState.js";
 import { createTogetherWorker } from "./netease/togetherWorker.js";
 import { McpEventBridge } from "./pluginEvents.js";
-import { createPluginMcpNodeHandler, PLUGIN_MCP_PATH, pluginDiscoverResult } from "./pluginMcp.js";
+import {
+  createPluginMcpNodeHandler,
+  handlePluginEventRpc,
+  PLUGIN_MCP_PATH,
+  pluginDiscoverResult,
+} from "./pluginMcp.js";
 import {
   OAUTH_PATHS,
   OAUTH_SCOPE,
@@ -353,6 +358,11 @@ export function createHttpServer() {
               id: record.id ?? null,
               result: pluginDiscoverResult(),
             });
+            return;
+          }
+          const eventResponse = await handlePluginEventRpc(record, pluginEventBridge);
+          if (eventResponse) {
+            writeJson(res, 200, eventResponse);
             return;
           }
           await pluginMcpHandler(req, res, body);
