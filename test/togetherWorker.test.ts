@@ -3,6 +3,37 @@ import test from "node:test";
 import { TogetherWorker } from "../src/netease/togetherWorker.js";
 import type { RealtimeChatRoomMessage } from "../src/netease/realtimeTransport.js";
 
+test("worker startup logs do not expose the NetEase account id", async () => {
+  const worker = new TogetherWorker({ cookie: "", enabled: true, onEvent: () => {} });
+  const internal = worker as unknown as {
+    running: boolean;
+    client: { getAccountProfile: () => Promise<{
+      id: string;
+      nickname: null;
+      avatarUrl: null;
+      gender: null;
+    }> };
+    run: () => Promise<void>;
+  };
+  const privateAccountId = "private-account-id";
+  internal.running = true;
+  internal.client.getAccountProfile = async () => {
+    internal.running = false;
+    return { id: privateAccountId, nickname: null, avatarUrl: null, gender: null };
+  };
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => logs.push(values.map(String).join(" "));
+  try {
+    await internal.run();
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(logs.some((line) => line.includes(privateAccountId)), false);
+  assert.equal(logs.includes("NetEase Together worker ready"), true);
+});
+
 test("read-only worker skips native realtime credentials and connection", async () => {
   const worker = new TogetherWorker({ cookie: "", enabled: true, realtimeEnabled: false, onEvent: () => {} });
   const internal = worker as unknown as {

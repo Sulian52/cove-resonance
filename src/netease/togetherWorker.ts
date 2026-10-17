@@ -87,7 +87,7 @@ export class TogetherWorker {
       this.accountProfile = await this.client.getAccountProfile();
       this.status.accountId = this.accountProfile.id;
       this.status.phase = "waiting_invite";
-      console.log(`NetEase Together worker ready for account ${this.status.accountId}`);
+      console.log("NetEase Together worker ready");
     } catch (error) {
       this.recordError(error, "Cookie validation failed");
     }
@@ -170,7 +170,7 @@ export class TogetherWorker {
     try {
       const credentials = await this.client.getRealtimeCredentials();
       console.log(
-        `NetEase NIM realtime credentials acquired for account ${this.status.accountId ?? "unknown"}; addresses=${credentials.addresses.length}`,
+        `NetEase NIM realtime credentials acquired; addresses=${credentials.addresses.length}`,
       );
       if (!this.accountProfile) {
         this.accountProfile = await this.client.getAccountProfile();
@@ -187,7 +187,7 @@ export class TogetherWorker {
           ...(this.accountProfile.gender !== null ? { gender: this.accountProfile.gender } : {}),
         },
       });
-      console.log(`NetEase NIM realtime connected: roomId=${roomId} chatRoomId=${chatRoomId}`);
+      console.log("NetEase NIM realtime connected");
     } catch (error) {
       this.realtime.recordConnectionError(error);
       const detail = error instanceof Error ? error.message : "unknown error";
