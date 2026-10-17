@@ -48,3 +48,35 @@ test("deduplicates repeated realtime ChatRoom messages by message id", () => {
 
   assert.deepEqual(events, [{ source: "netease.chatroom", text: "hello once" }]);
 });
+
+test("private plugin chat accepts only the inviter and configured trigger", () => {
+  const events: string[] = [];
+  const worker = new TogetherWorker({
+    cookie: "",
+    enabled: false,
+    inviterUid: "owner-1",
+    restrictChatToInviter: true,
+    chatTriggerPrefixes: ["小助手", "@小助手"],
+    onEvent: (_source, text) => events.push(text),
+  });
+  const handle = (worker as unknown as {
+    handleRealtimeChatMessage: (message: RealtimeChatRoomMessage) => void;
+  }).handleRealtimeChatMessage.bind(worker);
+  const base: RealtimeChatRoomMessage = {
+    type: "chatroom_message",
+    category: "text",
+    msgType: 0,
+    senderId: "owner-1",
+    senderNick: "owner",
+    text: "not addressed",
+    messageId: "message-1",
+    timetagMs: 1,
+    receivedAtMs: 1,
+  };
+
+  handle(base);
+  handle({ ...base, senderId: "stranger", text: "小助手，hello", messageId: "message-2" });
+  handle({ ...base, text: "  小助手，这句像不像凛苍？", messageId: "message-3" });
+
+  assert.deepEqual(events, ["  小助手，这句像不像凛苍？"]);
+});

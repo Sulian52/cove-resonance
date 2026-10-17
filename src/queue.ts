@@ -63,11 +63,12 @@ export class InMemoryEventQueue {
     return null;
   }
 
-  reserveNext(): BridgeEvent | null {
+  reserveNext(predicate: (event: BridgeEvent) => boolean = () => true): BridgeEvent | null {
     if (this.getOutstandingRequiredReplyEvent()) return null;
 
     for (const row of this.conversationRows.values()) {
       if (row.status !== "pending") continue;
+      if (!predicate(row.event)) continue;
       row.status = "reserved";
       return row.event;
     }
@@ -78,6 +79,7 @@ export class InMemoryEventQueue {
         this.statePendingByKey.delete(key);
         continue;
       }
+      if (!predicate(row.event)) continue;
       row.status = "reserved";
       this.statePendingByKey.delete(key);
       return row.event;

@@ -8,9 +8,12 @@ This variant defaults to `BRIDGE_READ_ONLY=true`.
 - `/mcp` exposes only `netease_together_now` with a read-only annotation.
 - `/events` and `/listener/events` are unavailable in read-only mode.
 - Private chat events are not retained in the bridge queue in this mode.
-- The native NIM chat transport is disabled in read-only mode. Invitations,
-  room presence, playback and lyrics continue through the HTTP worker, normally
-  polling every four seconds. Progress between observations is estimated.
+- The native NIM chat transport is disabled in plain read-only mode. When the
+  isolated ChatGPT Work event adapter is enabled with `BRIDGE_PLUGIN_TOKEN`,
+  realtime chat is enabled only for that authenticated private path while
+  `/now` and the public `/mcp` remain read-only. Invitations, room presence,
+  playback and lyrics continue through the HTTP worker, normally polling every
+  four seconds. Progress between observations is estimated.
 - Data is public to anyone who knows the URL. `no-store` and `noindex` headers
   discourage caching and indexing; they are not access controls.
 - If playback has not been refreshed for 20 seconds, `stale=true`, status is

@@ -219,3 +219,15 @@ test("releasing an old reserved state event does not replay it over a newer stat
   assert.equal(queue.getEvent("state-old"), null);
   assert.equal(queue.reserveNext()?.id, "state-new");
 });
+
+test("a host adapter can reserve only the events it owns", () => {
+  const queue = new InMemoryEventQueue();
+  queue.enqueue(event("legacy"));
+  queue.enqueue({ ...event("plugin"), source: "netease.chatroom" });
+
+  assert.equal(
+    queue.reserveNext((candidate) => candidate.source === "netease.chatroom")?.id,
+    "plugin",
+  );
+  assert.equal(queue.status().conversation.pending, 1);
+});

@@ -7,6 +7,8 @@ import { createMcpServer } from "./mcp.js";
 import { listenerWakeHub } from "./listenerWake.js";
 import { PlaybackStateStore } from "./netease/playbackState.js";
 import { createTogetherWorker } from "./netease/togetherWorker.js";
+import { McpEventBridge } from "./pluginEvents.js";
+import { createPluginMcpNodeHandler, PLUGIN_MCP_PATH, pluginDiscoverResult } from "./pluginMcp.js";
 import { InMemoryEventQueue } from "./queue.js";
 import { createReadOnlyMcpServer, publicNow } from "./now.js";
 import type { BridgeEvent, BridgeStream, ReplyPolicy, ReplyRoute } from "./types.js";
@@ -17,9 +19,12 @@ const INGEST_TOKEN = process.env.BRIDGE_INGEST_TOKEN ?? "";
 // Safe by default for public deployments. Full bridge access requires a secret.
 const READ_ONLY = process.env.BRIDGE_READ_ONLY !== "false";
 const MCP_TOKEN = process.env.BRIDGE_MCP_TOKEN?.trim() ?? "";
+const PLUGIN_TOKEN = process.env.BRIDGE_PLUGIN_TOKEN?.trim() ?? "";
+const PLUGIN_ENABLED = Boolean(PLUGIN_TOKEN);
 const UNIX_SOCKET = process.env.BRIDGE_UNIX_SOCKET?.trim() ?? "";
 const queue = new InMemoryEventQueue();
 const playbackState = new PlaybackStateStore();
+const pluginEventBridge = new McpEventBridge(queue, playbackState);
 
 function replyRoutingFor(source: string): { replyRoute?: ReplyRoute; replyPolicy?: ReplyPolicy } {
   if (source === "netease.chatroom") {
@@ -93,7 +98,7 @@ function enqueueTogetherEvent(
   additionalModelContext?: string,
 ): boolean {
   // There is no event consumer in read-only mode; do not retain private chat.
-  if (READ_ONLY) return false;
+  if (READ_ONLY && (!PLUGIN_ENABLED || source !== "netease.chatroom")) return false;
   const id = randomUUID();
   const created = queue.enqueue(buildBridgeEvent(
     id,
@@ -102,11 +107,24 @@ function enqueueTogetherEvent(
     new Date().toISOString(),
     additionalModelContext,
   ));
-  if (created) listenerWakeHub.wake(source);
+  if (created) {
+    listenerWakeHub.wake(source);
+    if (PLUGIN_ENABLED && source === "netease.chatroom") pluginEventBridge.wake();
+  }
   return created;
 }
 
-const togetherWorker = createTogetherWorker(enqueueTogetherEvent, playbackState, !READ_ONLY);
+const togetherWorker = createTogetherWorker(
+  enqueueTogetherEvent,
+  playbackState,
+  !READ_ONLY || PLUGIN_ENABLED,
+);
+const pluginMcpHandler = createPluginMcpNodeHandler(
+  queue,
+  playbackState,
+  togetherWorker,
+  pluginEventBridge,
+);
 
 const eventInput = z.object({
   eventId: z.string().trim().min(1).max(200).optional(),
@@ -187,7 +205,43 @@ export function createHttpServer() {
         version: "0.1.0",
         queue: queue.status(),
         listener: listenerWakeHub.status(),
+        pluginEvents: pluginEventBridge.status(),
       });
+      return;
+    }
+
+    if (url.pathname === PLUGIN_MCP_PATH) {
+      if (!PLUGIN_ENABLED) {
+        writeJson(res, 404, { error: "not_found" });
+        return;
+      }
+      if (!bearerMatches(req, PLUGIN_TOKEN)) {
+        writeJson(res, 401, { error: "unauthorized" });
+        return;
+      }
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Cache-Control", "no-store");
+      try {
+        if (req.method === "POST") {
+          const body = await readJson(req);
+          const record = body && typeof body === "object" && !Array.isArray(body)
+            ? body as Record<string, unknown>
+            : {};
+          if (record.method === "server/discover") {
+            writeJson(res, 200, {
+              jsonrpc: "2.0",
+              id: record.id ?? null,
+              result: pluginDiscoverResult(),
+            });
+            return;
+          }
+          await pluginMcpHandler(req, res, body);
+          return;
+        }
+        await pluginMcpHandler(req, res);
+      } catch {
+        if (!res.headersSent) writeJson(res, 500, { error: "internal_server_error" });
+      }
       return;
     }
 

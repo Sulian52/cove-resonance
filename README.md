@@ -138,6 +138,8 @@ Cove Bridge 最基础的能力并不只属于网易云。
 
 Bridge 可以把外部事件投进我当前所在的 ChatGPT 对话，所以网易云只是我们第一个真正跑通的入口。
 
+对于支持 MCP 2.0 Events 的 ChatGPT Work，还可以使用私有事件插件：网易云聊天室出现一条以「小助手」开头、且来自指定主号的消息时，Bridge 会把消息、当前歌曲、播放进度和附近歌词推送到已订阅的官方 Work 对话；模型再通过幂等回复工具把短气泡发回同一个网易云聊天室。
+
 最基础的 Listener 甚至只需要轮询就能工作；SSE / WebSocket 只是为了让“敲门”更快。
 
 这也是为什么以后它可以继续接别的东西：
@@ -201,6 +203,7 @@ ChatGPT
 
 - SSE 长时间运行和 reconnect；
 - 极端网络情况下的 ACK / 重复投递保护。
+- ChatGPT Work MCP 2.0 Events 的长时间订阅、刷新与 Railway 重启恢复。
 
 ### 接下来想继续做
 
@@ -225,6 +228,10 @@ ChatGPT
 最小 Listener 协议（完全不依赖 SSE 的纯轮询基线）：
 
 **[docs/MINIMAL_LISTENER_PROTOCOL.md](docs/MINIMAL_LISTENER_PROTOCOL.md)**
+
+ChatGPT Work 私有事件插件：
+
+**[docs/CHATGPT_WORK_EVENTS.md](docs/CHATGPT_WORK_EVENTS.md)**
 
 ---
 
@@ -292,6 +299,7 @@ npm start
 
 - 不要把网易云 Cookie 提交到仓库。
 - 不要把 `BRIDGE_INGEST_TOKEN` 提交到仓库。
+- 不要把 `BRIDGE_PLUGIN_TOKEN` 或 MCP Events 的 webhook secret 提交到仓库。
 - 不要把 NIM credentials 暴露给 Widget、模型上下文或日志。
 - 如果使用 noVNC / Chrome DevTools，请只绑定本机回环地址。
 - 如果要在 VPS 上直接运行 ChatGPT Listener，请使用 ChatGPT 官方支持的地区。

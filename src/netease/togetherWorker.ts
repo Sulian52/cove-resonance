@@ -17,6 +17,8 @@ type TogetherWorkerOptions = {
   enabled: boolean;
   realtimeEnabled?: boolean;
   inviterUid?: string;
+  restrictChatToInviter?: boolean;
+  chatTriggerPrefixes?: string[];
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
   onEvent: EventSink;
@@ -332,6 +334,14 @@ export class TogetherWorker {
     if (message.category !== "text" || !message.text) return;
     const ownAccountId = this.status.accountId;
     if (ownAccountId && message.senderId === ownAccountId) return;
+    if (this.options.restrictChatToInviter) {
+      if (!this.options.inviterUid || message.senderId !== this.options.inviterUid) return;
+    }
+    const triggerPrefixes = this.options.chatTriggerPrefixes ?? [];
+    const trimmedText = message.text.trimStart();
+    if (triggerPrefixes.length > 0 && !triggerPrefixes.some((prefix) => trimmedText.startsWith(prefix))) {
+      return;
+    }
 
     const roomKey = this.roomId ?? "no-room";
     const messageKey = message.messageId
@@ -409,6 +419,15 @@ export function createTogetherWorker(
     process.env.TOGETHER_ENABLED?.trim() ?? "",
   );
   const enabled = Boolean(cookie) && !explicitlyDisabled;
+  const pluginMode = Boolean(process.env.BRIDGE_PLUGIN_TOKEN?.trim());
+  const inviterUid = process.env.NETEASE_INVITER_UID?.trim() || undefined;
+  const configuredPrefixes = (process.env.NETEASE_CHAT_TRIGGER_PREFIXES ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const chatTriggerPrefixes = configuredPrefixes.length > 0
+    ? configuredPrefixes
+    : pluginMode ? ["小助手", "@小助手"] : [];
   const parseInterval = (name: string, fallback: number) => {
     const value = Number(process.env[name]);
     return Number.isFinite(value) && value >= 1000 ? value : fallback;
@@ -417,12 +436,17 @@ export function createTogetherWorker(
   if (cookie && !cookie.includes("MUSIC_U=")) {
     console.warn("NETEASE_COOKIE is set but MUSIC_U is missing; Together worker may not authenticate.");
   }
+  if (pluginMode && !inviterUid) {
+    console.warn("BRIDGE_PLUGIN_TOKEN is set but NETEASE_INVITER_UID is missing; ChatRoom messages will be ignored.");
+  }
 
   return new TogetherWorker({
     cookie,
     enabled,
     realtimeEnabled,
-    inviterUid: process.env.NETEASE_INVITER_UID?.trim() || undefined,
+    inviterUid,
+    restrictChatToInviter: pluginMode,
+    chatTriggerPrefixes,
     pollIntervalMs: parseInterval("TOGETHER_POLL_INTERVAL_MS", 4000),
     heartbeatIntervalMs: parseInterval("TOGETHER_HEARTBEAT_INTERVAL_MS", 10_000),
     onEvent,
