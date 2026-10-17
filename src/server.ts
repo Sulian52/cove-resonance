@@ -338,6 +338,15 @@ export function createHttpServer() {
           const record = body && typeof body === "object" && !Array.isArray(body)
             ? body as Record<string, unknown>
             : {};
+          const requestParams = record.params && typeof record.params === "object" && !Array.isArray(record.params)
+            ? record.params as Record<string, unknown>
+            : {};
+          const requestMeta = requestParams._meta && typeof requestParams._meta === "object" && !Array.isArray(requestParams._meta)
+            ? requestParams._meta as Record<string, unknown>
+            : {};
+          console.log(
+            `ChatGPT plugin MCP request: method=${String(record.method ?? "unknown")} protocolHeader=${String(req.headers["mcp-protocol-version"] ?? "none")} modernEnvelope=${Object.hasOwn(requestMeta, "io.modelcontextprotocol/protocolVersion")}`,
+          );
           if (record.method === "server/discover") {
             writeJson(res, 200, {
               jsonrpc: "2.0",
