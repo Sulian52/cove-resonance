@@ -69,7 +69,9 @@ export function parseLatestInvite(
   history: JsonRecord,
   contactUid: string,
   now = Date.now(),
+  options: { maxAgeMs?: number; roomId?: string } = {},
 ): TogetherInvite | null {
+  const maxAgeMs = options.maxAgeMs ?? 5 * 60_000;
   const messages = findMessages(history)
     .map(asRecord)
     .sort((a, b) => (readNumber(b.time) ?? 0) - (readNumber(a.time) ?? 0));
@@ -79,7 +81,7 @@ export function parseLatestInvite(
     if (type !== null && type !== 23) continue;
     let messageTime = readNumber(message.time) ?? 0;
     if (messageTime > 0 && messageTime < 10_000_000_000) messageTime *= 1000;
-    if (!messageTime || now - messageTime > 5 * 60_000) continue;
+    if (!messageTime || now - messageTime > maxAgeMs) continue;
 
     const rawPayload = readString(message.msg);
     if (!rawPayload) continue;
@@ -96,8 +98,10 @@ export function parseLatestInvite(
     const roomId = decoded.match(/[?&]roomId=([^&#]+)/i)?.[1];
     const inviterId = decoded.match(/[?&]inviterId=([^&#]+)/i)?.[1] ?? contactUid;
     if (!roomId || !inviterId) continue;
+    const decodedRoomId = decodeRepeatedly(roomId);
+    if (options.roomId && decodedRoomId !== options.roomId) continue;
     return {
-      roomId: decodeRepeatedly(roomId),
+      roomId: decodedRoomId,
       inviterId: decodeRepeatedly(inviterId),
       messageTime,
     };
