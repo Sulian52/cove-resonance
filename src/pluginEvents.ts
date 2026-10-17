@@ -269,6 +269,7 @@ export async function postWebhookPinned(
 export class McpEventBridge {
   private readonly subscriptions = new Map<string, EventSubscription>();
   private dispatching = false;
+  private readonly recentRpc: Array<{ method: string; at: string; outcome: string }> = [];
   private lastRpcMethod: string | null = null;
   private lastRpcAt: string | null = null;
   private lastRpcOutcome: string | null = null;
@@ -289,6 +290,7 @@ export class McpEventBridge {
     lastRpcMethod: string | null;
     lastRpcAt: string | null;
     lastRpcOutcome: string | null;
+    recentRpc: Array<{ method: string; at: string; outcome: string }>;
   } {
     this.purgeExpired();
     return {
@@ -297,13 +299,17 @@ export class McpEventBridge {
       lastRpcMethod: this.lastRpcMethod,
       lastRpcAt: this.lastRpcAt,
       lastRpcOutcome: this.lastRpcOutcome,
+      recentRpc: [...this.recentRpc],
     };
   }
 
   noteRpc(method: string, outcome: string): void {
+    const at = new Date().toISOString();
     this.lastRpcMethod = method;
-    this.lastRpcAt = new Date().toISOString();
+    this.lastRpcAt = at;
     this.lastRpcOutcome = outcome;
+    this.recentRpc.push({ method, at, outcome });
+    if (this.recentRpc.length > 10) this.recentRpc.shift();
   }
 
   async subscribe(input: EventSubscribeInput): Promise<{
