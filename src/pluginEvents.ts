@@ -238,7 +238,15 @@ export async function postWebhookPinned(
         ...headers,
         "Content-Length": String(Buffer.byteLength(body)),
       },
-      lookup: (_hostname, _options, callback) => {
+      lookup: (_hostname, options, callback) => {
+        if (typeof options === "object" && options.all) {
+          const allCallback = callback as unknown as (
+            error: NodeJS.ErrnoException | null,
+            addresses: Array<{ address: string; family: number }>,
+          ) => void;
+          allCallback(null, [{ address: selected.address, family: selected.family }]);
+          return;
+        }
         callback(null, selected.address, selected.family);
       },
       signal: AbortSignal.timeout(10_000),
