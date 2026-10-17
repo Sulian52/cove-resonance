@@ -19,7 +19,7 @@
     "@modelcontextprotocol/sdk": "1.30.0",
     "@modelcontextprotocol/server": "2.3.1",
     "NeteaseCloudMusicApi": "4.32.0",
-    "node-nim": "10.10.13",
+    "node-nim": "10.9.40",
     "standardwebhooks": "1.1.1",
     "zod": "4.6.5"
   },
