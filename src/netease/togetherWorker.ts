@@ -125,6 +125,7 @@ export class TogetherWorker {
     if (remote.inRoom && remote.roomId) {
       if (this.roomId !== remote.roomId) {
         this.enterRoom(remote.roomId, remote.chatRoomId);
+        await this.recoverActiveInviter(remote.roomId);
       } else if (remote.chatRoomId && remote.chatRoomId !== this.chatRoomId) {
         this.chatRoomId = remote.chatRoomId;
       }
@@ -224,8 +225,8 @@ export class TogetherWorker {
     }
     try {
       const accepted = await this.client.acceptInvite(invite.roomId, invite.inviterId);
-      this.activeInviterId = invite.inviterId;
       this.enterRoom(accepted.roomId ?? invite.roomId, accepted.chatRoomId);
+      this.activeInviterId = invite.inviterId;
       if (accepted.roomId && accepted.chatRoomId) {
         await this.ensureRealtime(accepted.roomId, accepted.chatRoomId);
       }
@@ -237,7 +238,10 @@ export class TogetherWorker {
 
   private enterRoom(roomId: string, chatRoomId: string | null = null): void {
     const changedRoom = this.roomId !== roomId;
-    if (changedRoom) void this.realtime.disconnect();
+    if (changedRoom) {
+      void this.realtime.disconnect();
+      this.activeInviterId = this.options.inviterUid ?? null;
+    }
     this.roomId = roomId;
     this.chatRoomId = chatRoomId;
     this.previousSongId = null;
@@ -251,6 +255,31 @@ export class TogetherWorker {
     this.status.playStatus = "UNKNOWN";
     this.status.phase = "listening";
     this.updateState((sink) => sink.enterRoom(roomId));
+  }
+
+  private async recoverActiveInviter(roomId: string): Promise<void> {
+    if (!this.options.restrictChatToInviter || this.activeInviterId) return;
+    const ownId = this.status.accountId;
+    if (!ownId) return;
+
+    try {
+      const contacts = await this.client.getRecentContacts();
+      const contactIds = collectContactUserIds(contacts, ownId);
+      for (const uid of contactIds) {
+        const history = await this.client.getPrivateHistory(uid);
+        const invite = parseLatestInvite(history, uid, Date.now(), {
+          maxAgeMs: 24 * 60 * 60_000,
+          roomId,
+        });
+        if (!invite) continue;
+        this.activeInviterId = invite.inviterId;
+        console.log("NetEase Together inviter recovered from private invite history");
+        return;
+      }
+      console.warn("NetEase Together inviter recovery pending; private chat remains locked");
+    } catch {
+      console.warn("NetEase Together inviter recovery failed; private chat remains locked");
+    }
   }
 
   private leaveRoom(message: string): void {
