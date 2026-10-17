@@ -1,6 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decodeRealtimePlaybackEvent, NeteaseRealtimeTransport } from "../src/netease/realtimeTransport.js";
+import {
+  decodeRealtimePlaybackEvent,
+  NeteaseRealtimeTransport,
+  waitForNimLogin,
+} from "../src/netease/realtimeTransport.js";
+
+test("waits through a retryable NIM connection error until login succeeds", async () => {
+  await waitForNimLogin(async (callback) => {
+    callback({ res_code_: 415, login_step_: 1, retrying_: true });
+    await Promise.resolve();
+    callback({ res_code_: 200, login_step_: 3, retrying_: false });
+  }, 100);
+});
+
+test("rejects a terminal NIM login failure", async () => {
+  await assert.rejects(
+    waitForNimLogin(async (callback) => {
+      callback({ res_code_: 302, login_step_: 3, retrying_: false });
+    }, 100),
+    /code=302 step=3 retrying=false/,
+  );
+});
 
 test("decodes event_type=20000 config string playback event", () => {
   const event = decodeRealtimePlaybackEvent({
