@@ -140,3 +140,50 @@ test("private plugin chat can learn the allowed sender from the accepted invite"
 
   assert.deepEqual(events, ["小助手，听见了吗？"]);
 });
+
+test("private plugin chat recovers the inviter after restarting inside an active room", async () => {
+  const events: string[] = [];
+  const worker = new TogetherWorker({
+    cookie: "",
+    enabled: false,
+    restrictChatToInviter: true,
+    chatTriggerPrefixes: ["小助手"],
+    onEvent: (_source, text) => events.push(text),
+  });
+  const messageTime = Date.now() - 30 * 60_000;
+  const internal = worker as unknown as {
+    status: { accountId: string | null };
+    client: {
+      getRecentContacts: () => Promise<Record<string, unknown>>;
+      getPrivateHistory: (uid: string) => Promise<Record<string, unknown>>;
+    };
+    recoverActiveInviter: (roomId: string) => Promise<void>;
+    handleRealtimeChatMessage: (message: RealtimeChatRoomMessage) => void;
+  };
+  internal.status.accountId = "secondary-account";
+  internal.client.getRecentContacts = async () => ({ data: [{ userId: "owner-account" }] });
+  internal.client.getPrivateHistory = async () => ({
+    msgs: [{
+      type: 23,
+      time: messageTime,
+      msg: JSON.stringify({
+        nativeUrl: "orpheus://listenTogether?roomId=active-room&inviterId=owner-account",
+      }),
+    }],
+  });
+
+  await internal.recoverActiveInviter("active-room");
+  internal.handleRealtimeChatMessage({
+    type: "chatroom_message",
+    category: "text",
+    msgType: 0,
+    senderId: "owner-account",
+    senderNick: "owner",
+    text: "小助手，重启以后听得到吗？",
+    messageId: "recovered-message",
+    timetagMs: messageTime,
+    receivedAtMs: messageTime,
+  });
+
+  assert.deepEqual(events, ["小助手，重启以后听得到吗？"]);
+});
