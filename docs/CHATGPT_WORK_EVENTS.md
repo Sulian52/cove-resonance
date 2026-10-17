@@ -31,14 +31,16 @@ private plugin endpoint separately:
 
 ```dotenv
 BRIDGE_READ_ONLY=true
-BRIDGE_PLUGIN_TOKEN=<a long random secret entered only in Railway and ChatGPT connection setup>
+BRIDGE_PLUGIN_TOKEN=<a long random secret entered only in Railway and the Cove authorization page>
 # Optional: NETEASE_INVITER_UID=<the main account numeric user ID>
 NETEASE_CHAT_TRIGGER_PREFIXES=小助手,@小助手
 BRIDGE_EVENT_STATE_PATH=/data/cove-event-subscriptions.json
 ```
 
-`BRIDGE_PLUGIN_TOKEN` is accepted as a fixed Bearer/API-key credential. Never
-put its value in a plugin archive, GitHub, logs, or chat messages.
+`BRIDGE_PLUGIN_TOKEN` protects the single-user OAuth authorization page and
+signs short-lived access tokens plus renewable refresh tokens. ChatGPT receives
+an OAuth token, not this secret. Never put its value in a plugin archive,
+GitHub, logs, or chat messages.
 
 When plugin mode is enabled, realtime room chat is denied unless the sender ID
 matches the inviter of the room that the secondary account just accepted. You
@@ -53,9 +55,17 @@ state and its signing secret survive redeploys.
 ## Private plugin connection
 
 Create a private ChatGPT plugin whose `mcp.json` points to the endpoint above,
-uses Streamable HTTP, and declares API-key authentication with the Bearer header
-scheme. Enter the same `BRIDGE_PLUGIN_TOKEN` only in ChatGPT's secure connection
-prompt.
+uses Streamable HTTP, and declares OAuth authentication with dynamic client
+registration and the `cove:listen` scope. During the first connection, the
+bridge opens its own authorization page. Enter `BRIDGE_PLUGIN_TOKEN` there;
+the value is submitted directly to the Railway service and is not stored in
+the plugin package.
+
+The bridge publishes OAuth protected-resource and authorization-server
+metadata, uses Authorization Code + PKCE, supports dynamic client
+registration, and rotates short-lived access tokens with signed refresh
+tokens. Unauthorized MCP responses include `WWW-Authenticate` discovery
+metadata so ChatGPT can start or repair the connection.
 
 After installing the plugin, start a Work chat and ask ChatGPT to monitor the
 `netease.message.created` event. Tell it to answer naturally and call

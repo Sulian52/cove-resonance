@@ -9,6 +9,12 @@ import { PlaybackStateStore } from "./netease/playbackState.js";
 import { createTogetherWorker } from "./netease/togetherWorker.js";
 import { McpEventBridge } from "./pluginEvents.js";
 import { createPluginMcpNodeHandler, PLUGIN_MCP_PATH, pluginDiscoverResult } from "./pluginMcp.js";
+import {
+  OAUTH_PATHS,
+  OAUTH_SCOPE,
+  OAuthRequestError,
+  PluginOAuthServer,
+} from "./pluginOAuth.js";
 import { InMemoryEventQueue } from "./queue.js";
 import { createReadOnlyMcpServer, publicNow } from "./now.js";
 import type { BridgeEvent, BridgeStream, ReplyPolicy, ReplyRoute } from "./types.js";
@@ -21,10 +27,15 @@ const READ_ONLY = process.env.BRIDGE_READ_ONLY !== "false";
 const MCP_TOKEN = process.env.BRIDGE_MCP_TOKEN?.trim() ?? "";
 const PLUGIN_TOKEN = process.env.BRIDGE_PLUGIN_TOKEN?.trim() ?? "";
 const PLUGIN_ENABLED = Boolean(PLUGIN_TOKEN);
+const PLUGIN_PUBLIC_BASE_URL = process.env.BRIDGE_PUBLIC_BASE_URL?.trim().replace(/\/$/, "")
+  || (process.env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN.trim()}`
+    : "");
 const UNIX_SOCKET = process.env.BRIDGE_UNIX_SOCKET?.trim() ?? "";
 const queue = new InMemoryEventQueue();
 const playbackState = new PlaybackStateStore();
 const pluginEventBridge = new McpEventBridge(queue, playbackState);
+const pluginOAuth = PLUGIN_ENABLED ? new PluginOAuthServer(PLUGIN_TOKEN) : null;
 
 function replyRoutingFor(source: string): { replyRoute?: ReplyRoute; replyPolicy?: ReplyPolicy } {
   if (source === "netease.chatroom") {
@@ -138,6 +149,11 @@ function writeJson(res: ServerResponse, status: number, value: unknown): void {
 }
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
+  const body = await readBody(req);
+  return body ? JSON.parse(body) : {};
+}
+
+async function readBody(req: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
@@ -146,8 +162,7 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
     if (size > 64 * 1024) throw new Error("request_too_large");
     chunks.push(buffer);
   }
-  const body = Buffer.concat(chunks).toString("utf8");
-  return body ? JSON.parse(body) : {};
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function authorized(req: IncomingMessage): boolean {
@@ -161,6 +176,26 @@ function bearerMatches(req: IncomingMessage, secret: string): boolean {
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
+function bearerToken(req: IncomingMessage): string {
+  const value = req.headers.authorization ?? "";
+  return value.startsWith("Bearer ") ? value.slice("Bearer ".length).trim() : "";
+}
+
+function publicOrigin(req: IncomingMessage): string {
+  if (PLUGIN_PUBLIC_BASE_URL) return new URL(PLUGIN_PUBLIC_BASE_URL).origin;
+  const forwardedProto = String(req.headers["x-forwarded-proto"] ?? "").split(",")[0].trim();
+  const protocol = forwardedProto === "https" ? "https" : "http";
+  return new URL(`${protocol}://${req.headers.host ?? "localhost"}`).origin;
+}
+
+function writeOAuthError(res: ServerResponse, error: unknown): void {
+  if (error instanceof OAuthRequestError) {
+    writeJson(res, error.status, { error: error.error, error_description: error.message });
+    return;
+  }
+  writeJson(res, 400, { error: "invalid_request", error_description: "Invalid OAuth request." });
+}
+
 export function createHttpServer() {
   return createServer(async (req, res) => {
     if (!req.url || !req.method) {
@@ -168,6 +203,76 @@ export function createHttpServer() {
       return;
     }
     const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
+    const origin = publicOrigin(req);
+    const pluginResource = `${origin}${PLUGIN_MCP_PATH}`;
+
+    if (PLUGIN_ENABLED && pluginOAuth) {
+      const protectedResourcePaths = new Set([
+        OAUTH_PATHS.protectedResource,
+        `${OAUTH_PATHS.protectedResource}${PLUGIN_MCP_PATH}`,
+      ]);
+      if (req.method === "GET" && protectedResourcePaths.has(url.pathname)) {
+        res.setHeader("Cache-Control", "no-store");
+        writeJson(res, 200, pluginOAuth.protectedResourceMetadata(origin, pluginResource));
+        return;
+      }
+      if (req.method === "GET" && url.pathname === OAUTH_PATHS.metadata) {
+        res.setHeader("Cache-Control", "no-store");
+        writeJson(res, 200, pluginOAuth.authorizationServerMetadata(origin));
+        return;
+      }
+      if (req.method === "POST" && url.pathname === OAUTH_PATHS.registration) {
+        res.setHeader("Cache-Control", "no-store");
+        try {
+          writeJson(res, 201, pluginOAuth.registerClient(await readJson(req)));
+        } catch (error) {
+          writeOAuthError(res, error);
+        }
+        return;
+      }
+      if (url.pathname === OAUTH_PATHS.authorization && req.method === "GET") {
+        res.setHeader("Cache-Control", "no-store");
+        res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        try {
+          const start = pluginOAuth.beginAuthorization(url.searchParams, pluginResource);
+          res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+          res.end(pluginOAuth.authorizationPage(start.requestTicket, start.clientName));
+        } catch (error) {
+          writeOAuthError(res, error);
+        }
+        return;
+      }
+      if (url.pathname === OAUTH_PATHS.authorization && req.method === "POST") {
+        res.setHeader("Cache-Control", "no-store");
+        res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        const form = new URLSearchParams(await readBody(req));
+        const requestTicket = form.get("request") ?? "";
+        try {
+          const location = pluginOAuth.approveAuthorization(requestTicket, form.get("secret") ?? "");
+          res.writeHead(302, { Location: location });
+          res.end();
+        } catch (error) {
+          if (error instanceof OAuthRequestError && error.error === "access_denied") {
+            res.writeHead(error.status, { "content-type": "text/html; charset=utf-8" });
+            res.end(pluginOAuth.authorizationPage(requestTicket, "ChatGPT", error.message));
+          } else {
+            writeOAuthError(res, error);
+          }
+        }
+        return;
+      }
+      if (url.pathname === OAUTH_PATHS.token && req.method === "POST") {
+        res.setHeader("Cache-Control", "no-store");
+        try {
+          writeJson(res, 200, pluginOAuth.exchangeToken(new URLSearchParams(await readBody(req))));
+        } catch (error) {
+          writeOAuthError(res, error);
+        }
+        return;
+      }
+    }
 
     if (url.pathname === "/now") {
       res.setHeader("Cache-Control", "no-store, max-age=0");
@@ -215,7 +320,13 @@ export function createHttpServer() {
         writeJson(res, 404, { error: "not_found" });
         return;
       }
-      if (!bearerMatches(req, PLUGIN_TOKEN)) {
+      const token = bearerToken(req);
+      const oauthAuthorized = Boolean(pluginOAuth?.verifyAccessToken(token, pluginResource));
+      if (!bearerMatches(req, PLUGIN_TOKEN) && !oauthAuthorized) {
+        res.setHeader(
+          "WWW-Authenticate",
+          `Bearer resource_metadata="${origin}${OAUTH_PATHS.protectedResource}", scope="${OAUTH_SCOPE}"`,
+        );
         writeJson(res, 401, { error: "unauthorized" });
         return;
       }
