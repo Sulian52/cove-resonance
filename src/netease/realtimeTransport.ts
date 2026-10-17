@@ -505,9 +505,16 @@ export class NeteaseRealtimeTransport {
       null,
       "",
     );
-    const loginCode = readNumber(asRecord(loginResult).res_code_);
+    const login = asRecord(loginResult);
+    const loginCode = readNumber(login.res_code_);
     if (loginCode !== 200) {
-      throw new Error(`NIM login failed${loginCode === null ? "" : ` code=${loginCode}`}`);
+      const loginStep = readNumber(login.login_step_);
+      const retrying = login.retrying_ === true;
+      throw new Error(
+        `NIM login failed${loginCode === null ? "" : ` code=${loginCode}`}`
+        + `${loginStep === null ? "" : ` step=${loginStep}`}`
+        + ` retrying=${retrying}`,
+      );
     }
     this.loggedInAccount = credentials.accId;
     this.markImOnline();
