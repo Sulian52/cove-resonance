@@ -353,6 +353,7 @@ export function createHttpServer() {
             `ChatGPT plugin MCP request: method=${String(record.method ?? "unknown")} protocolHeader=${String(req.headers["mcp-protocol-version"] ?? "none")} modernEnvelope=${Object.hasOwn(requestMeta, "io.modelcontextprotocol/protocolVersion")}`,
           );
           if (record.method === "server/discover") {
+            pluginEventBridge.noteRpc("server/discover", "ok");
             writeJson(res, 200, {
               jsonrpc: "2.0",
               id: record.id ?? null,
