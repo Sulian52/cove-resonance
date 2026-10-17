@@ -32,7 +32,7 @@ private plugin endpoint separately:
 ```dotenv
 BRIDGE_READ_ONLY=true
 BRIDGE_PLUGIN_TOKEN=<a long random secret entered only in Railway and ChatGPT connection setup>
-NETEASE_INVITER_UID=<the main account numeric user ID>
+# Optional: NETEASE_INVITER_UID=<the main account numeric user ID>
 NETEASE_CHAT_TRIGGER_PREFIXES=小助手,@小助手
 BRIDGE_EVENT_STATE_PATH=/data/cove-event-subscriptions.json
 ```
@@ -41,8 +41,10 @@ BRIDGE_EVENT_STATE_PATH=/data/cove-event-subscriptions.json
 put its value in a plugin archive, GitHub, logs, or chat messages.
 
 When plugin mode is enabled, realtime room chat is denied unless the sender ID
-matches `NETEASE_INVITER_UID`. Messages must start with one of the configured
-trigger prefixes. The defaults are `小助手` and `@小助手`.
+matches the inviter of the room that the secondary account just accepted. You
+may additionally pin `NETEASE_INVITER_UID`, but it is not required. Messages
+must start with one of the configured trigger prefixes. The defaults are
+`小助手` and `@小助手`.
 
 The Docker image uses Debian/glibc because the native `node-nim` runtime does
 not support Alpine/musl. Mount a Railway volume at `/data` so event subscription

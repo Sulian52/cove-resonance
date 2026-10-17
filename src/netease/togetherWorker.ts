@@ -35,6 +35,7 @@ export class TogetherWorker {
   private running = false;
   private roomId: string | null = null;
   private chatRoomId: string | null = null;
+  private activeInviterId: string | null = null;
   private previousSongId: string | null = null;
   private previousPlayStatus: PlayingState["playStatus"] = "UNKNOWN";
   private joinedPending = false;
@@ -223,6 +224,7 @@ export class TogetherWorker {
     }
     try {
       const accepted = await this.client.acceptInvite(invite.roomId, invite.inviterId);
+      this.activeInviterId = invite.inviterId;
       this.enterRoom(accepted.roomId ?? invite.roomId, accepted.chatRoomId);
       if (accepted.roomId && accepted.chatRoomId) {
         await this.ensureRealtime(accepted.roomId, accepted.chatRoomId);
@@ -255,6 +257,7 @@ export class TogetherWorker {
     const wasInRoom = Boolean(this.roomId);
     this.roomId = null;
     this.chatRoomId = null;
+    this.activeInviterId = null;
     this.previousSongId = null;
     this.previousPlayStatus = "UNKNOWN";
     this.currentLyricsModelContext = null;
@@ -335,7 +338,8 @@ export class TogetherWorker {
     const ownAccountId = this.status.accountId;
     if (ownAccountId && message.senderId === ownAccountId) return;
     if (this.options.restrictChatToInviter) {
-      if (!this.options.inviterUid || message.senderId !== this.options.inviterUid) return;
+      const allowedSenderId = this.options.inviterUid ?? this.activeInviterId;
+      if (!allowedSenderId || message.senderId !== allowedSenderId) return;
     }
     const triggerPrefixes = this.options.chatTriggerPrefixes ?? [];
     const trimmedText = message.text.trimStart();
@@ -436,10 +440,6 @@ export function createTogetherWorker(
   if (cookie && !cookie.includes("MUSIC_U=")) {
     console.warn("NETEASE_COOKIE is set but MUSIC_U is missing; Together worker may not authenticate.");
   }
-  if (pluginMode && !inviterUid) {
-    console.warn("BRIDGE_PLUGIN_TOKEN is set but NETEASE_INVITER_UID is missing; ChatRoom messages will be ignored.");
-  }
-
   return new TogetherWorker({
     cookie,
     enabled,

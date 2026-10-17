@@ -80,3 +80,32 @@ test("private plugin chat accepts only the inviter and configured trigger", () =
 
   assert.deepEqual(events, ["  小助手，这句像不像凛苍？"]);
 });
+
+test("private plugin chat can learn the allowed sender from the accepted invite", () => {
+  const events: string[] = [];
+  const worker = new TogetherWorker({
+    cookie: "",
+    enabled: false,
+    restrictChatToInviter: true,
+    chatTriggerPrefixes: ["小助手"],
+    onEvent: (_source, text) => events.push(text),
+  });
+  const internal = worker as unknown as {
+    activeInviterId: string | null;
+    handleRealtimeChatMessage: (message: RealtimeChatRoomMessage) => void;
+  };
+  internal.activeInviterId = "learned-owner";
+  internal.handleRealtimeChatMessage({
+    type: "chatroom_message",
+    category: "text",
+    msgType: 0,
+    senderId: "learned-owner",
+    senderNick: "owner",
+    text: "小助手，听见了吗？",
+    messageId: "learned-message",
+    timetagMs: 1,
+    receivedAtMs: 1,
+  });
+
+  assert.deepEqual(events, ["小助手，听见了吗？"]);
+});
