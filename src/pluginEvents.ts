@@ -222,7 +222,9 @@ export async function postWebhookPinned(
       throw new CallbackEndpointError("invalid_url");
     }
   }
-  const selected = addresses[0];
+  // Railway containers may resolve an IPv6 address even when their outbound
+  // path is IPv4-only. Prefer a validated IPv4 result and fall back to IPv6.
+  const selected = addresses.find((entry) => entry.family === 4) ?? addresses[0];
 
   return await new Promise<PostResult>((resolve, reject) => {
     const req = httpsRequest({
@@ -275,6 +277,7 @@ export class McpEventBridge {
   private lastRpcOutcome: string | null = null;
   private lastVerificationHttpStatus: number | null = null;
   private lastVerificationOutcome: string | null = null;
+  private lastVerificationErrorCode: string | null = null;
 
   constructor(
     private readonly queue: InMemoryEventQueue,
@@ -295,6 +298,7 @@ export class McpEventBridge {
     recentRpc: Array<{ method: string; at: string; outcome: string }>;
     lastVerificationHttpStatus: number | null;
     lastVerificationOutcome: string | null;
+    lastVerificationErrorCode: string | null;
   } {
     this.purgeExpired();
     return {
@@ -306,6 +310,7 @@ export class McpEventBridge {
       recentRpc: [...this.recentRpc],
       lastVerificationHttpStatus: this.lastVerificationHttpStatus,
       lastVerificationOutcome: this.lastVerificationOutcome,
+      lastVerificationErrorCode: this.lastVerificationErrorCode,
     };
   }
 
@@ -393,6 +398,7 @@ export class McpEventBridge {
     let result: PostResult;
     this.lastVerificationHttpStatus = null;
     this.lastVerificationOutcome = "started";
+    this.lastVerificationErrorCode = null;
     try {
       result = await this.poster(
         subscription.url,
@@ -400,6 +406,10 @@ export class McpEventBridge {
         signatureHeaders(subscription, messageId, body),
       );
     } catch (error) {
+      const code = error && typeof error === "object" && "code" in error
+        ? String((error as { code?: unknown }).code ?? "unknown")
+        : "unknown";
+      this.lastVerificationErrorCode = code.slice(0, 40);
       this.lastVerificationOutcome = error instanceof CallbackEndpointError
         ? `network_${error.reason}`
         : "network_error";
