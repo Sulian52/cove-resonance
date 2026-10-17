@@ -223,6 +223,21 @@ export class PluginOAuthServer {
 <body><main class="card"><h1>连接凛苍一起听小助手</h1><p><strong>${escapeHtml(clientName)}</strong> 想连接你的私人 Cove Resonance 服务。</p><p class="hint">请输入你刚才在 Railway 里设置的 <code>BRIDGE_PLUGIN_TOKEN</code>。口令只会直接发送给你的 Railway 服务，不会写进插件。</p>${message}<form method="post" action="${OAUTH_PATHS.authorization}"><input type="hidden" name="request" value="${escapeHtml(requestTicket)}"><label for="secret">连接口令</label><input id="secret" name="secret" type="password" autocomplete="current-password" required autofocus><button type="submit">授权并连接</button></form></main></body></html>`;
   }
 
+  authorizationPageCsp(requestTicket: string): string {
+    const payload = this.verifySigned<SignedPayload & { request: AuthorizationRequest }>(
+      requestTicket,
+      "request",
+    );
+    const redirectOrigin = parseHttpsUrl(payload.request.redirectUri, "redirect_uri").origin;
+    return [
+      "default-src 'none'",
+      "style-src 'unsafe-inline'",
+      `form-action 'self' ${redirectOrigin}`,
+      "base-uri 'none'",
+      "frame-ancestors 'none'",
+    ].join("; ");
+  }
+
   approveAuthorization(requestTicket: string, suppliedSecret: string): string {
     const payload = this.verifySigned<SignedPayload & { request: AuthorizationRequest }>(requestTicket, "request");
     const actual = Buffer.from(suppliedSecret, "utf8");

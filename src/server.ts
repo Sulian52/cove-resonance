@@ -232,10 +232,10 @@ export function createHttpServer() {
       }
       if (url.pathname === OAUTH_PATHS.authorization && req.method === "GET") {
         res.setHeader("Cache-Control", "no-store");
-        res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
         res.setHeader("X-Content-Type-Options", "nosniff");
         try {
           const start = pluginOAuth.beginAuthorization(url.searchParams, pluginResource);
+          res.setHeader("Content-Security-Policy", pluginOAuth.authorizationPageCsp(start.requestTicket));
           res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
           res.end(pluginOAuth.authorizationPage(start.requestTicket, start.clientName));
         } catch (error) {
@@ -245,7 +245,6 @@ export function createHttpServer() {
       }
       if (url.pathname === OAUTH_PATHS.authorization && req.method === "POST") {
         res.setHeader("Cache-Control", "no-store");
-        res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
         res.setHeader("X-Content-Type-Options", "nosniff");
         const form = new URLSearchParams(await readBody(req));
         const requestTicket = form.get("request") ?? "";
@@ -255,6 +254,7 @@ export function createHttpServer() {
           res.end();
         } catch (error) {
           if (error instanceof OAuthRequestError && error.error === "access_denied") {
+            res.setHeader("Content-Security-Policy", pluginOAuth.authorizationPageCsp(requestTicket));
             res.writeHead(error.status, { "content-type": "text/html; charset=utf-8" });
             res.end(pluginOAuth.authorizationPage(requestTicket, "ChatGPT", error.message));
           } else {

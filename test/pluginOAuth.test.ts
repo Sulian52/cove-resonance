@@ -50,6 +50,9 @@ test("OAuth authorization code flow uses the Railway secret and PKCE", () => {
   });
   const start = oauth.beginAuthorization(params, resource);
   assert.equal(start.clientName, "ChatGPT");
+  const pageCsp = oauth.authorizationPageCsp(start.requestTicket);
+  assert.match(pageCsp, /form-action 'self' https:\/\/chatgpt\.com/);
+  assert.doesNotMatch(pageCsp, /connector\/oauth/);
   assert.throws(
     () => oauth.approveAuthorization(start.requestTicket, "wrong secret"),
     /口令不正确/,
