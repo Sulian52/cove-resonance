@@ -6,6 +6,7 @@ import { asRecord, readNumber, readString, type RealtimeCredentials } from "./ty
 
 const NIM_APP_KEY = "3a6a3e48f6854dfa4e4464f3bdaec3b4";
 const ENTER_TIMEOUT_MS = 15_000;
+const LOGIN_TIMEOUT_MS = 45_000;
 const IM_RECOVERY_TIMEOUT_MS = 20_000;
 const SEND_TIMEOUT_MS = 10_000;
 const MAX_CHAT_TEXT_LENGTH = 500;
@@ -98,7 +99,13 @@ type ChatRoomLike = {
 type NimClientLike = {
   init(appKey: string, appDataDir: string, appInstallDir: string, config: Record<string, unknown>): boolean;
   initEventHandlers(): void;
-  login(appKey: string, account: string, password: string, cb: null, extension: string): Promise<[unknown]>;
+  login(
+    appKey: string,
+    account: string,
+    password: string,
+    cb: ((result: unknown) => void) | null,
+    extension: string,
+  ): Promise<[unknown]>;
   on?(event: string, handler: EventHandler): unknown;
 };
 
@@ -350,6 +357,68 @@ async function loadNodeNim(): Promise<NodeNimModule> {
   return module as NodeNimModule;
 }
 
+export async function waitForNimLogin(
+  start: (callback: (result: unknown) => void) => Promise<unknown>,
+  timeoutMs = LOGIN_TIMEOUT_MS,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let lastCode: number | null = null;
+    let lastStep: number | null = null;
+
+    const finish = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      action();
+    };
+    const timeout = setTimeout(() => {
+      finish(() => reject(new Error(
+        "NIM login timed out"
+        + `${lastCode === null ? "" : ` code=${lastCode}`}`
+        + `${lastStep === null ? "" : ` step=${lastStep}`}`,
+      )));
+    }, timeoutMs);
+    timeout.unref?.();
+
+    const callback = (raw: unknown) => {
+      const login = asRecord(raw);
+      const code = readNumber(login.res_code_);
+      const step = readNumber(login.login_step_);
+      const retrying = login.retrying_ === true;
+      lastCode = code;
+      lastStep = step;
+
+      if (code === 200 && step === 3) {
+        finish(resolve);
+        return;
+      }
+      if (code !== null && code !== 200 && !retrying) {
+        finish(() => reject(new Error(
+          `NIM login failed code=${code}`
+          + `${step === null ? "" : ` step=${step}`}`
+          + " retrying=false",
+        )));
+        return;
+      }
+      if (code !== null && code !== 200) {
+        console.warn(
+          `NetEase NIM login retrying: code=${code}`
+          + `${step === null ? "" : ` step=${step}`}`,
+        );
+      }
+    };
+
+    try {
+      void start(callback).catch((error) => {
+        finish(() => reject(error));
+      });
+    } catch (error) {
+      finish(() => reject(error));
+    }
+  });
+}
+
 export class NeteaseRealtimeTransport {
   private chatroom: ChatRoomLike | null = null;
   private nimClient: NimClientLike | null = null;
@@ -498,24 +567,13 @@ export class NeteaseRealtimeTransport {
 
     const client = this.nimClient;
     if (!client) throw new Error("NIM client is unavailable");
-    const [loginResult] = await client.login(
+    await waitForNimLogin((callback) => client.login(
       NIM_APP_KEY,
       credentials.accId,
       credentials.token,
-      null,
+      callback,
       "",
-    );
-    const login = asRecord(loginResult);
-    const loginCode = readNumber(login.res_code_);
-    if (loginCode !== 200) {
-      const loginStep = readNumber(login.login_step_);
-      const retrying = login.retrying_ === true;
-      throw new Error(
-        `NIM login failed${loginCode === null ? "" : ` code=${loginCode}`}`
-        + `${loginStep === null ? "" : ` step=${loginStep}`}`
-        + ` retrying=${retrying}`,
-      );
-    }
+    ));
     this.loggedInAccount = credentials.accId;
     this.markImOnline();
   }
